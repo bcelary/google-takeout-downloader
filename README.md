@@ -1,6 +1,6 @@
 # Playwright Takeout Automation
 
-Automated Google Takeout exports using Playwright.
+A tool for downloading Google Takeout archives that uses the archive page view (`takeout.google.com/manage/archive`) to download files one by one. Authentication is manual and requires user interaction, with possible re-authentication prompts during the process. The tool verifies file sizes upon completion but cannot check integrity since Google doesn't provide checksums.
 
 ## Setup
 
