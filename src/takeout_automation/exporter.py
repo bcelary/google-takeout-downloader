@@ -41,71 +41,6 @@ class AuthState(Enum):
     ERROR = "error"
 
 
-def prepare_archive_url(archive_url: str) -> str:
-    """Ensure hl=en is set in the URL for consistent language."""
-    parsed_url = urlparse(archive_url)
-    query_params = parse_qs(parsed_url.query)
-    query_params["hl"] = ["en"]
-    new_query = urlencode(query_params, doseq=True)
-    return urlunparse(parsed_url._replace(query=new_query))
-
-
-def setup_browser_context(p: Playwright) -> tuple[BrowserContext, Page]:
-    """Launch and configure the browser context for Google Takeout automation."""
-    launch_args = [
-        "--disable-blink-features=AutomationControlled",
-        "--no-sandbox",
-        "--disable-infobars",
-    ]
-
-    context = p.chromium.launch_persistent_context(
-        user_data_dir=str(settings.user_data_dir),
-        executable_path=settings.executable_path,
-        headless=False,
-        args=launch_args,
-        accept_downloads=True,
-        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Brave/128.0.0.0 Chrome/128.0.0.0 Safari/537.36",
-    )
-
-    page = context.new_page()
-    return context, page
-
-
-def handle_download(
-    download: Download, download_path: Path, expected_size: int | None = None
-) -> None:
-    """Handle the download process: wait for completion, save to path, verify size, and clean up."""
-    print(f"Download object created. Filename: {download.suggested_filename}")
-
-    # Wait for download to actually complete by accessing the path
-    download_path_on_disk = download.path()
-    print(f"Download completed (temporary save to: {download_path_on_disk})")
-
-    # Save to our download directory with suggested filename
-    print("Saving file to target location...")
-    saved_path = download_path / download.suggested_filename
-    download.save_as(str(saved_path))
-    print(f"File saved to: {saved_path}")
-
-    # Verify file size if expected size is provided
-    if expected_size is not None:
-        actual_size = saved_path.stat().st_size
-        if actual_size != expected_size:
-            print("WARNING: File size mismatch!")
-            print(f"Expected: {expected_size} bytes")
-            print(f"Actual: {actual_size} bytes")
-            print("The download may be incomplete or corrupted.")
-        else:
-            print(f"✓ File size verified: {expected_size} bytes")
-
-    # Remove the temporary file after successful save
-    try:
-        download_path_on_disk.unlink()
-        print(f"Temporary file removed: {download_path_on_disk}")
-    except Exception as e:
-        print(f"Warning: Could not remove temporary file {download_path_on_disk}: {e}")
-
-
 class AuthenticationStateMachine:
     """
     State machine for handling Google authentication flow.
@@ -266,6 +201,36 @@ class AuthenticationStateMachine:
             time.sleep(1)
 
 
+def prepare_archive_url(archive_url: str) -> str:
+    """Ensure hl=en is set in the URL for consistent language."""
+    parsed_url = urlparse(archive_url)
+    query_params = parse_qs(parsed_url.query)
+    query_params["hl"] = ["en"]
+    new_query = urlencode(query_params, doseq=True)
+    return urlunparse(parsed_url._replace(query=new_query))
+
+
+def setup_browser_context(p: Playwright) -> tuple[BrowserContext, Page]:
+    """Launch and configure the browser context for Google Takeout automation."""
+    launch_args = [
+        "--disable-blink-features=AutomationControlled",
+        "--no-sandbox",
+        "--disable-infobars",
+    ]
+
+    context = p.chromium.launch_persistent_context(
+        user_data_dir=str(settings.user_data_dir),
+        executable_path=settings.executable_path,
+        headless=False,
+        args=launch_args,
+        accept_downloads=True,
+        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Brave/128.0.0.0 Chrome/128.0.0.0 Safari/537.36",
+    )
+
+    page = context.new_page()
+    return context, page
+
+
 def wait_for_user_confirmation(part_number: int) -> bool:
     """
     Give the user time to interrupt the download process before proceeding.
@@ -357,6 +322,41 @@ def find_part_to_download(parts_info: list[PartInfo], part_number: int) -> PartI
         f"Fatal error: Part {part_number} not found in available parts. "
         f"Available parts: {available_parts}"
     )
+
+
+def handle_download(
+    download: Download, download_path: Path, expected_size: int | None = None
+) -> None:
+    """Handle the download process: wait for completion, save to path, verify size, and clean up."""
+    print(f"Download object created. Filename: {download.suggested_filename}")
+
+    # Wait for download to actually complete by accessing the path
+    download_path_on_disk = download.path()
+    print(f"Download completed (temporary save to: {download_path_on_disk})")
+
+    # Save to our download directory with suggested filename
+    print("Saving file to target location...")
+    saved_path = download_path / download.suggested_filename
+    download.save_as(str(saved_path))
+    print(f"File saved to: {saved_path}")
+
+    # Verify file size if expected size is provided
+    if expected_size is not None:
+        actual_size = saved_path.stat().st_size
+        if actual_size != expected_size:
+            print("WARNING: File size mismatch!")
+            print(f"Expected: {expected_size} bytes")
+            print(f"Actual: {actual_size} bytes")
+            print("The download may be incomplete or corrupted.")
+        else:
+            print(f"✓ File size verified: {expected_size} bytes")
+
+    # Remove the temporary file after successful save
+    try:
+        download_path_on_disk.unlink()
+        print(f"Temporary file removed: {download_path_on_disk}")
+    except Exception as e:
+        print(f"Warning: Could not remove temporary file {download_path_on_disk}: {e}")
 
 
 def download_files(
