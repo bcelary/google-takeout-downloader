@@ -1,4 +1,4 @@
-# Playwright Takeout Automation
+# Google Takeout Downloader
 
 A tool for downloading Google Takeout archives that uses the archive page view (`takeout.google.com/manage/archive`) to download files one by one. Authentication is manual and requires user interaction, with possible re-authentication prompts during the process. The tool verifies file sizes upon completion but cannot check integrity since Google doesn't provide checksums.
 
@@ -17,13 +17,16 @@ Download files from a Google Takeout archive page:
 
 ```bash
 # Basic usage
-takeout-export "https://takeout.google.com/manage/archive/..."
+takeout-download "https://takeout.google.com/manage/archive/..."
 
 # Start from a specific part (useful for resuming downloads)
-takeout-export --start-part 2 "https://takeout.google.com/manage/archive/..."
+takeout-download --start-part 2 "https://takeout.google.com/manage/archive/..."
+
+# Prompt for password upfront (secure override of .env)
+takeout-download --prompt-password "https://takeout.google.com/manage/archive/..."
 
 # With custom options
-takeout-export --executable-path /path/to/browser --download-path /custom/downloads "https://takeout.google.com/manage/archive/..."
+takeout-download --executable-path /path/to/browser --download-path /custom/downloads "https://takeout.google.com/manage/archive/..."
 ```
 
 The tool will:
@@ -35,13 +38,16 @@ The tool will:
 
 ### Environment Variables
 
-Optional: Set environment variables in `.env` file to customize behavior:
+Optional: Set environment variables in `.env` file to customize behavior. Copy `.env.sample` to `.env` and modify as needed:
 
 ```
 EXECUTABLE_PATH=/path/to/chrome/executable  # Optional: uses default browser if not set
 DOWNLOAD_PATH=./takeout-downloads  # this is the default setting if not set
 USER_DATA_DIR=./takeout-profile  # this is the default setting if not set
+GOOGLE_PASS=your_google_password  # Optional: enables automatic password entry for re-authentication
 ```
+
+**Note:** The `.env` file is automatically loaded when running the tool. Never commit your actual `.env` file to version control.
 
 ### Direct Execution
 

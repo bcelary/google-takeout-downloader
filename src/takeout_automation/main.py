@@ -1,6 +1,11 @@
 import argparse
 import os
 
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 
 def main() -> None:
     """Main entry point."""
@@ -32,6 +37,11 @@ def main() -> None:
         action="store_true",
         help="Skip parts that have already been downloaded (default: False)",
     )
+    parser.add_argument(
+        "--prompt-password",
+        action="store_true",
+        help="Prompt for Google password upfront instead of when needed (default: False)",
+    )
 
     args = parser.parse_args()
 
@@ -42,6 +52,12 @@ def main() -> None:
         os.environ["DOWNLOAD_PATH"] = args.download_path
     if args.user_data_dir:
         os.environ["USER_DATA_DIR"] = args.user_data_dir
+
+    # Handle password prompting if requested
+    if args.prompt_password:
+        from .exporter import prompt_for_password
+
+        prompt_for_password()
 
     # Run the extraction and download process
     from .exporter import download_takeout_archive

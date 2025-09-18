@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     executable_path: str | None = None
     user_data_dir: Path = Path("./takeout-profile")
 
+    # Authentication parameters
+    google_pass: str | None = None
+
     @field_validator("executable_path")
     @classmethod
     def validate_executable_path(cls, v: str | None) -> str | None:

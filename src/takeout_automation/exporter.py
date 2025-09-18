@@ -1,3 +1,4 @@
+import getpass
 import time
 from pathlib import Path
 from typing import TypedDict
@@ -32,6 +33,81 @@ def detect_google_password_prompt(page: Page) -> bool:
     Checks URL directly since password pages load normally and are detectable by URL.
     """
     return GOOGLE_PASSWORD_PAGE_URL_PART in page.url
+
+
+def prompt_for_password() -> None:
+    """
+    Prompt user for Google password and overwrite settings.google_pass.
+    Handles cancellation gracefully without overwriting existing password.
+    """
+    try:
+        password = getpass.getpass("Enter your Google password: ")
+        if password:
+            settings.google_pass = password  # Always overwrite when password provided
+            print("Password set for this session.")
+        else:
+            print("Empty password entered. Using existing password if available.")
+    except (EOFError, KeyboardInterrupt):
+        print("Password prompt cancelled. Using existing password if available.")
+        # Don't overwrite - keep existing password
+
+
+def handle_password_prompt(page: Page, context_message: str = "") -> None:
+    """
+    Handle Google password prompt automatically using the stored password.
+    """
+    if len(context_message):
+        context_message = " " + context_message
+
+    if not settings.google_pass:
+        print(
+            f"Google password prompt detected{context_message}. Please enter your password in the browser."
+        )
+        input("Press Enter after entering password...")
+        return
+
+    print(
+        f"Google password prompt detected{context_message}. Attempting automatic password entry..."
+    )
+    try:
+        # Wait for password input field to be visible
+        password_input = page.locator('input[type="password"]').first
+        password_input.wait_for(state="visible", timeout=10000)
+
+        # Clear any existing text and enter password with small delays
+        password_input.click()
+        page.keyboard.press("Control+a")  # Select all
+        page.keyboard.press("Delete")  # Clear
+        time.sleep(0.5)  # Small delay
+
+        # Type password character by character with small delays
+        for char in settings.google_pass:
+            password_input.type(char)
+            time.sleep(0.1)  # Small delay between characters
+
+        time.sleep(0.5)  # Delay before submitting
+
+        # Submit the form
+        password_input.press("Enter")
+        print(f"Password entered automatically{context_message}.")
+
+        # Wait for page to fully load after authentication
+        page.wait_for_load_state("networkidle", timeout=10000)
+        time.sleep(2)  # Extra buffer for dynamic content
+
+        # Check if we're still on password page (authentication failed)
+        if detect_google_password_prompt(page):
+            print(f"Automatic password entry failed{context_message}.")
+            input("Press Enter after entering password manually...")
+        elif detect_google_takeout_archive(page):
+            print(f"Authentication successful{context_message}!")
+        else:
+            print(f"Page navigation unclear{context_message}. Please check browser.")
+            input("Press Enter when ready to continue...")
+
+    except Exception as e:
+        print(f"Automatic password entry failed{context_message}: {e}")
+        input("Press Enter after entering password manually...")
 
 
 def detect_google_takeout_archive(page: Page) -> bool:
@@ -128,10 +204,7 @@ def ensure_archive_ready(page: Page, archive_url: str) -> None:
         print("Navigating to archive page.")
 
     if detect_google_password_prompt(page):
-        print(
-            "Google password prompt detected. Please enter your password in the browser."
-        )
-        input("Press Enter after entering password and reaching the archive page...")
+        handle_password_prompt(page, "during archive navigation")
 
 
 def wait_for_user_confirmation(part_number: int) -> bool:
@@ -271,10 +344,20 @@ def download_files(
         try:
             # Click the specific link for this part
             link_element = page.locator(f'a[href="{part_to_download["link"]}"]')
-            # Start download and wait for it to begin (defaults to 30s wait)
-            with page.expect_download() as download_info:
-                link_element.click()
-                print("Download initiated...")
+            link_element.click()
+            print("Download initiated...")
+
+            # Wait a few seconds and check if password prompt appeared
+            time.sleep(3)
+
+            if detect_google_password_prompt(page):
+                handle_password_prompt(page, "after download click")
+
+            # Now wait for the actual download to start
+            with page.expect_download(
+                timeout=10000
+            ) as download_info:  # 10 second timeout
+                print("Waiting for download to start...")
 
             download = download_info.value
             expected_size = part_to_download["size"]
