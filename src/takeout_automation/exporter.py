@@ -54,6 +54,7 @@ class AuthenticationStateMachine:
         self.context_message = context_message
         self.archive_url = archive_url
         self.current_state = AuthState.UNKNOWN
+        self.unknown_count = 0
 
     def detect_archive_page(self) -> bool:
         """Detect if Google archive page is being shown."""
@@ -168,10 +169,17 @@ class AuthenticationStateMachine:
             return False
 
         elif state == AuthState.UNKNOWN:
-            print(
-                f"Unknown authentication state {self.context_message}. Please check browser."
-            )
-            input("Press Enter when ready to continue...")
+            if self.unknown_count > 10:
+                print(
+                    f"Unknown authentication state {self.context_message}. Please check browser."
+                )
+                input("Press Enter when ready to continue...")
+                self.unknown_count = 0  # Reset counter after manual intervention
+            else:
+                print(
+                    f"Unknown state {self.context_message}, retrying... ({self.unknown_count}/10)"
+                )
+                time.sleep(1)  # Wait before retrying
             return False
 
         return False
@@ -187,8 +195,14 @@ class AuthenticationStateMachine:
             # Evaluate current state
             new_state = self.evaluate_state()
 
-            # If state changed, handle it
-            if new_state != self.current_state:
+            # Update unknown count
+            if new_state == AuthState.UNKNOWN:
+                self.unknown_count += 1
+            else:
+                self.unknown_count = 0
+
+            # Handle state if it changed or if it's UNKNOWN (to allow retries)
+            if new_state != self.current_state or new_state == AuthState.UNKNOWN:
                 self.current_state = new_state
                 if self.handle_state(new_state):
                     return True
