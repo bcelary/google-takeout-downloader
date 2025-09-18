@@ -59,6 +59,11 @@ def main() -> None:
         action="store_true",
         help="Prompt for Google password upfront instead of when needed (default: False)",
     )
+    parser.add_argument(
+        "--only-check-sizes",
+        action="store_true",
+        help="Only check file sizes in download directory against archive without downloading (default: False)",
+    )
 
     args = parser.parse_args()
 
@@ -75,9 +80,12 @@ def main() -> None:
         prompt_for_password()
 
     # Run the extraction and download process
-    from .exporter import download_takeout_archive
+    from .exporter import download_takeout_archive, check_takeout_sizes
 
-    download_takeout_archive(args.url, args.start_part, args.skip_downloaded)
+    if args.only_check_sizes:
+        check_takeout_sizes(args.url)
+    else:
+        download_takeout_archive(args.url, args.start_part, args.skip_downloaded)
 
 
 if __name__ == "__main__":

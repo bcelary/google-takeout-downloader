@@ -447,12 +447,10 @@ def download_files(
     print(f"\nAll downloads complete! Files saved to: {download_path}")
 
 
-def download_takeout_archive(
-    archive_url: str, start_part: int = 1, skip_downloaded: bool = False
-) -> None:
+def _setup_and_authenticate(archive_url: str, context_message: str) -> tuple[BrowserContext, Page, list[PartInfo]]:
     """
-    Navigate to Google Takeout archive page, wait for login, then download files sequentially.
-    Downloads happen directly in the browser with proper authentication.
+    Common setup and authentication logic shared between download and check functions.
+    Returns (context, page, parts_info) tuple.
     """
     archive_url = prepare_archive_url(archive_url)
 
@@ -466,23 +464,146 @@ def download_takeout_archive(
     download_path.mkdir(parents=True, exist_ok=True)
     user_data_dir.mkdir(parents=True, exist_ok=True)
 
-    with sync_playwright() as p:
-        context, page = setup_browser_context(p)
+    # Setup browser and authenticate
+    p = sync_playwright().start()
+    context, page = setup_browser_context(p)
 
+    try:
+        # Navigate to archive and authenticate
+        AuthenticationStateMachine(
+            page, context_message, archive_url
+        ).run_until_ready()
+
+        # Extract parts information
+        parts_info = extract_parts_info(page)
+        if not parts_info:
+            raise ValueError("No parts found. Verify authentication.")
+
+        return context, page, parts_info
+
+    except Exception:
+        # Clean up on error
         try:
-            download_files(
-                page, download_path, start_part, archive_url, skip_downloaded
-            )
-        except KeyboardInterrupt:
-            print("\nInterrupted. Exiting...")
-            return  # Exit cleanly without trying to close browser
-        except Exception as e:
-            print(f"Process failed: {e}")
-            raise
-        finally:
-            # Only close if not already handled by KeyboardInterrupt
+            context.close()
+        except Exception:
+            pass
+        raise
+
+
+def check_takeout_sizes(archive_url: str) -> None:
+    """
+    Check file sizes in download directory against archive without downloading.
+    Reports missing files and warns about potential false positives from extra files.
+    """
+    context = None
+    try:
+        context, page, parts_info = _setup_and_authenticate(
+            archive_url, "during archive navigation for size check"
+        )
+
+        print(f"Found {len(parts_info)} parts in archive.")
+
+        # Count expected files by size (skip unknown sizes)
+        expected_counts: dict[int, int] = {}
+        for part in parts_info:
+            if part["size"] is not None:
+                expected_counts[part["size"]] = expected_counts.get(part["size"], 0) + 1
+
+        if expected_counts:
+            print("Expected file sizes:")
+            for size, count in sorted(expected_counts.items()):
+                print(f"  - {size:,} bytes: {count} file(s)")
+        else:
+            print("No file sizes available in archive.")
+
+        # Count actual files by size in download directory
+        actual_counts: dict[int, int] = {}
+        total_files = 0
+        for file_path in settings.download_path.iterdir():
+            if file_path.is_file():
+                try:
+                    size = file_path.stat().st_size
+                    actual_counts[size] = actual_counts.get(size, 0) + 1
+                    total_files += 1
+                except OSError:
+                    print(f"Warning: Could not read size for {file_path.name}")
+
+        print(f"\nFound {total_files} files in download directory.")
+
+        if actual_counts:
+            print("Actual file sizes:")
+            for size, count in sorted(actual_counts.items()):
+                print(f"  - {size:,} bytes: {count} file(s)")
+
+        # Check for missing files
+        missing_files = []
+        total_missing = 0
+
+        for size, expected_count in expected_counts.items():
+            actual_count = actual_counts.get(size, 0)
+            if actual_count < expected_count:
+                missing_count = expected_count - actual_count
+                missing_files.append((size, missing_count))
+                total_missing += missing_count
+
+        # Report results
+        if missing_files:
+            print(f"\n❌ Missing {total_missing} file(s):")
+            for size, count in missing_files:
+                print(f"  - {count} file(s) of size {size:,} bytes")
+            print(f"\nTotal missing: {total_missing} file(s)")
+        else:
+            print("\n✅ All expected files are present by size!")
+
+        # Warn about extra files
+        extra_files = total_files - sum(expected_counts.values())
+        if extra_files > 0:
+            print(f"\n⚠️  Warning: {extra_files} extra file(s) found in download directory.")
+            print("This may indicate false positives or additional files not in the archive.")
+
+    except KeyboardInterrupt:
+        print("\nInterrupted. Exiting...")
+        return
+    except Exception as e:
+        print(f"Process failed: {e}")
+        raise
+    finally:
+        # Clean up browser
+        if context is not None:
             try:
-                print("Closing browser...")
+                context.close()
+                print("Browser closed.")
+            except Exception:
+                pass
+
+
+def download_takeout_archive(
+    archive_url: str, start_part: int = 1, skip_downloaded: bool = False
+) -> None:
+    """
+    Navigate to Google Takeout archive page, wait for login, then download files sequentially.
+    Downloads happen directly in the browser with proper authentication.
+    """
+    context = None
+    try:
+        context, page, parts_info = _setup_and_authenticate(
+            archive_url, "during archive navigation"
+        )
+
+        download_files(
+            page, settings.download_path, start_part, archive_url, skip_downloaded
+        )
+
+    except KeyboardInterrupt:
+        print("\nInterrupted. Exiting...")
+        return  # Exit cleanly without trying to close browser
+    except Exception as e:
+        print(f"Process failed: {e}")
+        raise
+    finally:
+        # Clean up browser
+        if context is not None:
+            try:
                 context.close()
                 print("Browser closed.")
             except Exception:
