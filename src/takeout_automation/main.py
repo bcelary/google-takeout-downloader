@@ -1,10 +1,27 @@
 import argparse
+import getpass
 import os
 
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
+
+
+def prompt_for_password() -> None:
+    """
+    Prompt user for Google password and set it in environment.
+    Handles cancellation gracefully without overwriting existing password.
+    """
+    try:
+        password = getpass.getpass("Enter your Google password: ")
+        if password:
+            os.environ["GOOGLE_PASS"] = password  # Set in environment for the session
+            print("Password set for this session.")
+        else:
+            print("Empty password entered. Using existing password if available.")
+    except (EOFError, KeyboardInterrupt):
+        print("Password prompt cancelled. Using existing password if available.")
 
 
 def main() -> None:
@@ -55,8 +72,6 @@ def main() -> None:
 
     # Handle password prompting if requested
     if args.prompt_password:
-        from .exporter import prompt_for_password
-
         prompt_for_password()
 
     # Run the extraction and download process

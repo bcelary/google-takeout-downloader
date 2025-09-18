@@ -1,8 +1,7 @@
-import getpass
 import time
 from enum import Enum
 from pathlib import Path
-from typing import Optional, TypedDict
+from typing import TypedDict
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from playwright.sync_api import (
@@ -15,6 +14,7 @@ from playwright.sync_api import (
 
 from .config import settings
 
+# Constants
 GOOGLE_ARCHIVE_URL_PART = "takeout.google.com/manage/archive"
 GOOGLE_IDENTIFIER_PAGE_URL_PART = "accounts.google.com/v3/signin/identifier"
 GOOGLE_PASSWORD_PAGE_URL_PART = "accounts.google.com/v3/signin/challenge/pwd"
@@ -41,129 +41,40 @@ class AuthState(Enum):
     ERROR = "error"
 
 
-def detect_google_identifier_prompt(page: Page) -> bool:
-    """
-    Detect if Google is showing the initial sign-in identifier page.
-    Checks URL for the identifier input page.
-    """
-    return GOOGLE_IDENTIFIER_PAGE_URL_PART in page.url
+def prepare_archive_url(archive_url: str) -> str:
+    """Ensure hl=en is set in the URL for consistent language."""
+    parsed_url = urlparse(archive_url)
+    query_params = parse_qs(parsed_url.query)
+    query_params["hl"] = ["en"]
+    new_query = urlencode(query_params, doseq=True)
+    return urlunparse(parsed_url._replace(query=new_query))
 
 
-def detect_google_password_prompt(page: Page) -> bool:
-    """
-    Detect if Google is prompting for password re-verification.
-    Checks both URL and presence of password input field.
-    """
-    if GOOGLE_PASSWORD_PAGE_URL_PART not in page.url:
-        return False
+def setup_browser_context(p: Playwright) -> tuple[BrowserContext, Page]:
+    """Launch and configure the browser context for Google Takeout automation."""
+    launch_args = [
+        "--disable-blink-features=AutomationControlled",
+        "--no-sandbox",
+        "--disable-infobars",
+    ]
 
-    # Also check if there's actually a password input field on the page
-    try:
-        password_inputs = page.locator('input[type="password"]').all()
-        return len(password_inputs) > 0
-    except Exception:
-        return False
-
-
-def detect_google_2fa_prompt(page: Page) -> bool:
-    """
-    Detect if Google is showing a 2FA prompt.
-    Checks URL for 2FA challenge pages.
-    """
-    return (
-        GOOGLE_2FA_PAGE_URL_PART in page.url
-        and GOOGLE_PASSWORD_PAGE_URL_PART not in page.url
-    )  # Exclude password pages
-
-
-def prompt_for_password() -> None:
-    """
-    Prompt user for Google password and overwrite settings.google_pass.
-    Handles cancellation gracefully without overwriting existing password.
-    """
-    try:
-        password = getpass.getpass("Enter your Google password: ")
-        if password:
-            settings.google_pass = password  # Always overwrite when password provided
-            print("Password set for this session.")
-        else:
-            print("Empty password entered. Using existing password if available.")
-    except (EOFError, KeyboardInterrupt):
-        print("Password prompt cancelled. Using existing password if available.")
-        # Don't overwrite - keep existing password
-
-
-def handle_password_prompt(page: Page, context_message: str = "") -> None:
-    """
-    Handle Google password prompt automatically using the stored password.
-    """
-    if len(context_message):
-        context_message = " " + context_message
-
-    if not settings.google_pass:
-        print(
-            f"Google password prompt detected{context_message}. Please enter your password in the browser."
-        )
-        input("Press Enter after entering password...")
-        return
-
-    print(
-        f"Google password prompt detected{context_message}. Attempting automatic password entry..."
+    context = p.chromium.launch_persistent_context(
+        user_data_dir=str(settings.user_data_dir),
+        executable_path=settings.executable_path,
+        headless=False,
+        args=launch_args,
+        accept_downloads=True,
+        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Brave/128.0.0.0 Chrome/128.0.0.0 Safari/537.36",
     )
-    try:
-        # Wait for password input field to be visible
-        password_input = page.locator('input[type="password"]').first
-        password_input.wait_for(state="visible", timeout=10000)
 
-        # Clear any existing text and enter password with small delays
-        password_input.click()
-        page.keyboard.press("Control+a")  # Select all
-        page.keyboard.press("Delete")  # Clear
-        time.sleep(0.5)  # Small delay
-
-        # Type password character by character with small delays
-        for char in settings.google_pass:
-            password_input.type(char)
-            time.sleep(0.1)  # Small delay between characters
-
-        time.sleep(0.5)  # Delay before submitting
-
-        # Submit the form
-        password_input.press("Enter")
-        print(f"Password entered automatically{context_message}.")
-
-        # Wait for page to fully load after authentication
-        page.wait_for_load_state("networkidle", timeout=10000)
-        time.sleep(2)  # Extra buffer for dynamic content
-
-        # Use unified authentication state handler
-        handle_authentication_states(page, context_message, skip_password_check=True)
-
-    except Exception as e:
-        print(f"Automatic password entry failed{context_message}: {e}")
-        input("Press Enter after entering password manually...")
-
-
-def detect_google_takeout_archive(page: Page) -> bool:
-    """
-    Detect if Google archive page is being shown.
-    Checks URL first, and only waits for load state if navigating to ensure stability.
-    """
-    # First check if we're already on the archive page (no need to wait)
-    if GOOGLE_ARCHIVE_URL_PART in page.url:
-        return True
-
-    # If not on archive page, wait for basic load completion before checking
-    page.wait_for_load_state("load")
-    return GOOGLE_ARCHIVE_URL_PART in page.url
+    page = context.new_page()
+    return context, page
 
 
 def handle_download(
     download: Download, download_path: Path, expected_size: int | None = None
 ) -> None:
-    """
-    Handle the download process: wait for completion, save to path, verify size, and clean up.
-    """
+    """Handle the download process: wait for completion, save to path, verify size, and clean up."""
     print(f"Download object created. Filename: {download.suggested_filename}")
 
     # Wait for download to actually complete by accessing the path
@@ -195,50 +106,44 @@ def handle_download(
         print(f"Warning: Could not remove temporary file {download_path_on_disk}: {e}")
 
 
-def prepare_archive_url(archive_url: str) -> str:
-    """
-    Ensure hl=en is set in the URL for consistent language.
-    """
-    parsed_url = urlparse(archive_url)
-    query_params = parse_qs(parsed_url.query)
-    query_params["hl"] = ["en"]
-    new_query = urlencode(query_params, doseq=True)
-    return urlunparse(parsed_url._replace(query=new_query))
-
-
-def setup_browser_context(p: Playwright) -> tuple[BrowserContext, Page]:
-    """
-    Launch and configure the browser context for Google Takeout automation.
-    """
-    launch_args = [
-        "--disable-blink-features=AutomationControlled",
-        "--no-sandbox",
-        "--disable-infobars",
-    ]
-
-    context = p.chromium.launch_persistent_context(
-        user_data_dir=str(settings.user_data_dir),
-        executable_path=settings.executable_path,
-        headless=False,
-        args=launch_args,
-        accept_downloads=True,
-        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Brave/128.0.0.0 Chrome/128.0.0.0 Safari/537.36",
-    )
-
-    page = context.new_page()
-    return context, page
-
-
 class AuthenticationStateMachine:
     """
     State machine for handling Google authentication flow.
     Manages transitions between different authentication states.
     """
 
-    def __init__(self, page: Page, context_message: str = ""):
+    def __init__(
+        self, page: Page, context_message: str = "(empty context)", archive_url: str | None = None
+    ):
         self.page = page
         self.context_message = context_message
+        self.archive_url = archive_url
         self.current_state = AuthState.UNKNOWN
+
+    def detect_archive_page(self) -> bool:
+        """Detect if Google archive page is being shown."""
+        return GOOGLE_ARCHIVE_URL_PART in self.page.url
+
+    def detect_identifier_page(self) -> bool:
+        """Detect if Google is showing the initial sign-in identifier page."""
+        return GOOGLE_IDENTIFIER_PAGE_URL_PART in self.page.url
+
+    def detect_password_page(self) -> bool:
+        """Detect if Google is prompting for password re-verification."""
+        if GOOGLE_PASSWORD_PAGE_URL_PART not in self.page.url:
+            return False
+        try:
+            password_inputs = self.page.locator('input[type="password"]').all()
+            return len(password_inputs) > 0
+        except Exception:
+            return False
+
+    def detect_2fa_page(self) -> bool:
+        """Detect if Google is showing a 2FA prompt."""
+        return (
+            GOOGLE_2FA_PAGE_URL_PART in self.page.url
+            and GOOGLE_PASSWORD_PAGE_URL_PART not in self.page.url
+        )
 
     def evaluate_state(self) -> AuthState:
         """Evaluate the current page state and return the appropriate AuthState."""
@@ -248,24 +153,59 @@ class AuthenticationStateMachine:
         except Exception:
             pass  # Ignore timeout, continue with evaluation
 
-        current_url = self.page.url
-        print(f"DEBUG: Evaluating URL: {current_url}")
-
-        if detect_google_takeout_archive(self.page):
-            print("DEBUG: Archive page detected")
+        if self.detect_archive_page():
             return AuthState.ARCHIVE_READY
-        elif detect_google_identifier_prompt(self.page):
-            print("DEBUG: Identifier page detected")
+        elif self.detect_identifier_page():
             return AuthState.NEEDS_IDENTIFIER
-        elif detect_google_password_prompt(self.page):
-            print("DEBUG: Password page detected")
+        elif self.detect_password_page():
             return AuthState.NEEDS_PASSWORD
-        elif detect_google_2fa_prompt(self.page):
-            print("DEBUG: 2FA page detected")
+        elif self.detect_2fa_page():
             return AuthState.NEEDS_2FA
         else:
-            print("DEBUG: Unknown state")
             return AuthState.UNKNOWN
+
+    def handle_password_entry(self) -> None:
+        """Handle Google password prompt automatically using the stored password."""
+        if not settings.google_pass:
+            print(
+                f"Google password prompt detected {self.context_message}. Please enter your password in the browser."
+            )
+            input("Press Enter after entering password manually...")
+            return
+
+        print(
+            f"Google password prompt detected {self.context_message}. Attempting automatic password entry..."
+        )
+        try:
+            # Wait for password input field to be visible
+            password_input = self.page.locator('input[type="password"]').first
+            password_input.wait_for(state="visible", timeout=10000)
+
+            # Clear any existing text and enter password with small delays
+            password_input.click()
+            self.page.keyboard.press("Control+a")  # Select all
+            self.page.keyboard.press("Delete")  # Clear
+            time.sleep(0.5)  # Small delay
+
+            # Type password character by character with small delays
+            for char in settings.google_pass:
+                password_input.type(char)
+                time.sleep(0.1)  # Small delay between characters
+
+            time.sleep(0.5)  # Delay before submitting
+
+            # Submit the form
+            password_input.press("Enter")
+            print(f"Password entered automatically {self.context_message}.")
+
+            # Wait for page to fully load after authentication
+            self.page.wait_for_load_state("networkidle", timeout=10000)
+            time.sleep(2)  # Extra buffer for dynamic content
+
+        except Exception as e:
+            print(f"Automatic password entry failed {self.context_message}: {e}")
+            print("Press Enter after entering password manually...")
+            input()
 
     def handle_state(self, state: AuthState) -> bool:
         """Handle the given authentication state. Returns True if archive is ready."""
@@ -274,27 +214,27 @@ class AuthenticationStateMachine:
 
         elif state == AuthState.NEEDS_IDENTIFIER:
             print(
-                f"Google sign-in required{self.context_message}. Please enter your email/username in the browser."
+                f"Google sign-in required {self.context_message}. Please enter your email/username in the browser."
             )
             input(
-                "Press Enter after completing sign-in and reaching the archive page..."
+                "Press Enter after completing sign-in and reaching the password or archive page..."
             )
             return False
 
         elif state == AuthState.NEEDS_PASSWORD:
-            handle_password_prompt(self.page, self.context_message)
+            self.handle_password_entry()
             return False
 
         elif state == AuthState.NEEDS_2FA:
             print(
-                f"2FA verification required{self.context_message}. Please complete 2FA in the browser."
+                f"2FA verification required {self.context_message}. Please complete 2FA in the browser."
             )
             input("Press Enter after completing 2FA and reaching the archive page...")
             return False
 
         elif state == AuthState.UNKNOWN:
             print(
-                f"Unknown authentication state{self.context_message}. Please check browser."
+                f"Unknown authentication state {self.context_message}. Please check browser."
             )
             input("Press Enter when ready to continue...")
             return False
@@ -303,14 +243,14 @@ class AuthenticationStateMachine:
 
     def run_until_ready(self) -> bool:
         """Run the state machine until archive is ready."""
-        iteration = 0
-        while True:
-            iteration += 1
-            print(f"DEBUG: State machine iteration {iteration}")
+        # Navigate to archive page if URL provided and we're not already there
+        if self.archive_url and GOOGLE_ARCHIVE_URL_PART not in self.page.url:
+            print("Navigating to archive page.")
+            self.page.goto(self.archive_url)
 
+        while True:
             # Evaluate current state
             new_state = self.evaluate_state()
-            print(f"DEBUG: Detected state: {new_state.value}")
 
             # If state changed, handle it
             if new_state != self.current_state:
@@ -324,26 +264,6 @@ class AuthenticationStateMachine:
 
             # Small delay before next evaluation
             time.sleep(1)
-
-
-def handle_authentication_states(
-    page: Page, context_message: str = "", skip_password_check: bool = False, archive_url: Optional[str] = None
-) -> bool:
-    """
-    Handle all Google authentication states using a state machine.
-    If archive_url is provided and we're not on archive page, navigate first.
-    Returns True if archive page is ready.
-    """
-    # Navigate to archive page if URL provided and we're not already there
-    if archive_url and not detect_google_takeout_archive(page):
-        print("Navigating to archive page.")
-        page.goto(archive_url)
-
-    state_machine = AuthenticationStateMachine(page, context_message)
-    return state_machine.run_until_ready()
-
-
-
 
 
 def wait_for_user_confirmation(part_number: int) -> bool:
@@ -456,7 +376,9 @@ def download_files(
         if not wait_for_user_confirmation(i):
             return
 
-        handle_authentication_states(page, " during archive navigation", archive_url=archive_url)
+        AuthenticationStateMachine(
+            page, "during archive navigation", archive_url
+        ).run_until_ready()
 
         # Extract parts information
         parts_info = extract_parts_info(page)
@@ -481,21 +403,19 @@ def download_files(
 
         print(f"Clicking download link of Part {i}...")
         try:
-            # Click the specific link for this part
-            link_element = page.locator(f'a[href="{part_to_download["link"]}"]')
-            link_element.click()
-            print("Download initiated...")
+            # Set up download listener BEFORE clicking to avoid race condition
+            with page.expect_download(timeout=120000) as download_info:  # 2 minute timeout
+                # Click the specific link for this part
+                link_element = page.locator(f'a[href="{part_to_download["link"]}"]')
+                link_element.click()
+                print("Download initiated...")
 
-            # Wait a few seconds and check for any authentication states
-            time.sleep(3)
+                # Wait a few seconds and check for any authentication states
+                time.sleep(3)
 
-            handle_authentication_states(page, " after download click")
+                AuthenticationStateMachine(page, "after download click").run_until_ready()
 
-            # Now wait for the actual download to start
-            with page.expect_download(
-                timeout=10000
-            ) as download_info:  # 10 second timeout
-                print("Waiting for download to start...")
+                print("Waiting for download to complete...")
 
             download = download_info.value
             expected_size = part_to_download["size"]
