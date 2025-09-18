@@ -1,6 +1,6 @@
 # Google Takeout Downloader
 
-A tool for downloading Google Takeout archives that uses the archive page view (`takeout.google.com/manage/archive`) to download files one by one. Authentication is manual and requires user interaction, with possible re-authentication prompts during the process. The tool verifies file sizes upon completion but cannot check integrity since Google doesn't provide checksums.
+A tool for downloading Google Takeout archives that uses the archive page view (`takeout.google.com/manage/archive`) to download files one by one. The initial login requires manual authentication (including 2FA when prompted), but subsequent re-authentication prompts can be handled automatically when `GOOGLE_PASS` is configured (via `.env` file or `--prompt-password` flag). The tool verifies file sizes upon completion but cannot check integrity since Google doesn't provide checksums.
 
 ## Setup
 
